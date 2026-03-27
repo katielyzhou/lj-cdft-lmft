@@ -537,3 +537,487 @@ def minimise_LR_parameters(model, zbins, Vext, parameters, eps=1, sig=1, rc=2.5,
 
     print(f"Not converged after {i} iterations (delta = {delta})")
     return None, None
+
+
+
+######### Extras #########
+
+def minimise_LR_twotype_MF(model, zbins, T,
+                        Vext_A, Vext_B, symmetric=False,
+                        eps_AA=1, eps_BB=1, interaction_parameter=0,
+                        sigma_AA=1, sigma_BB=1,
+                        rc_AA = 2.5, rc_AB = 2.5, rc_BB = 2.5, shift = True,
+                        rho_bulk_A = None, mu_A = None,
+                        rho_bulk_B = None, mu_B = None,
+                        initial_guess_A=0.04, initial_guess_B=0.04,
+                        input_bins=1201,
+                        plot=True, maxiter=100000, alpha_initial=0.000001, 
+                        alpha_updates=None,
+                        print_every=1000, plot_every=1000, tolerance=1e-5,
+                        output_dict=False):
+    """
+    Calculate the density profile with neural DFT using a standard Picard iteration 
+    for two types of particles for long-range interactions.
+
+    Parameters:
+    - model (tf.keras.Model): The Keras model to be used for the calculation of the 
+                              one-body direct correlation function.
+    - zbins (array-like): Spatial grid points.
+    - Vext (array-like): Negative of the External potential in units of kbT (-beta Vext)
+    - rho_bulk: bulk density (leave mu unspecified)
+    - mu: chemical potential of long range system in units of kbT (beta mu)
+    - interaction_parameter: diagonal element of array, where eps_ij = (1-interaction_parameter)*sqrt(eps_ii*eps_jj)
+    - plot (bool): Toggle interactive plotting.
+    - maxiter (int): Maximum number of Picard steps.
+    - alpha_initial (float): Initial value for the relaxation parameter alpha.
+    - alpha_updates (dict): Dictionary of iteration thresholds and corresponding 
+                            alpha values to update alpha during iterations.
+    - initial_guess (float): Initial guess for the density profile.
+
+    Returns:
+    - tuple: z coordinates and density profile.
+    """
+    """
+    if (mu_A is None and rho_bulk_A is None) or (mu_A is not None and rho_bulk_A is not None):
+        raise ValueError("Specify either the chemical potential 'mu' or the mean density 'rho_bulk' for species A")
+    
+    if (mu_B is None and rho_bulk_B is None) or (mu_B is not None and rho_bulk_B is not None):
+        raise ValueError("Specify either the chemical potential 'mu' or the mean density 'rho_bulk' for species B")
+    """
+    T = T * np.ones_like(zbins)
+    L = zbins[-1] - zbins[0]
+    beta = 1/T # Assuming kb=1
+    bin_width = abs(zbins[1] - zbins[0])
+
+    eps_AB = (1-interaction_parameter) * np.sqrt(eps_AA*eps_BB)
+    sigma_AB = 0.5 * (sigma_AA + sigma_BB)
+    
+    # setting up grid
+    rho_A_new = np.zeros_like(zbins)
+    rho_B_new = np.zeros_like(zbins)
+    validA = np.isfinite(Vext_A) 
+    validB = np.isfinite(Vext_B)
+    rho_A = initial_guess_A * np.ones_like(zbins)
+    rho_B = initial_guess_B * np.ones_like(zbins)
+    log_rho_A_new = np.zeros_like(zbins)
+    log_rho_B_new = np.zeros_like(zbins)
+    log_rho_A = np.zeros_like(zbins)
+    log_rho_B = np.zeros_like(zbins)
+    log_rho_A[validA] = np.log(initial_guess_A)
+    log_rho_B[validB] = np.log(initial_guess_B)
+    log_rho_A[~validA] = -np.inf
+    log_rho_B[~validB] = -np.inf
+    
+    potential_array_AA = lmft.attract(zbins, eps=eps_AA, sig=sigma_AA, cutoff=rc_AA, shift = shift)
+    potential_array_AB = lmft.attract(zbins, eps=eps_AB, sig=sigma_AB, cutoff=rc_AB, shift = shift)
+    potential_array_BB = lmft.attract(zbins, eps=eps_BB, sig=sigma_BB, cutoff=rc_BB, shift = shift)
+
+    mu_LR_A = mu_A*T[0]
+    mu_LR_B = mu_B*T[0]
+
+    if rho_bulk_A is None and rho_bulk_B is None:
+         # may give wrong densities when near phase coexistence
+         rho_b_a, rho_b_b = eos.calc_rhob_mixture(np.array([mu_LR_A, mu_LR_B]), T[0], np.array([eps_AA, eps_BB]),
+                                               np.array([sigma_AA, sigma_BB]), np.array([[0, interaction_parameter], [interaction_parameter, 0]]))
+    else:
+        rho_b_a = rho_bulk_A
+        rho_b_b = rho_bulk_B
+
+
+    # Picard iteration parameter
+    alpha = alpha_initial
+    if alpha_updates is None:
+        alpha_updates = alpha_updates_default_twotype
+    
+    if plot:
+        fig, ax = plt.configure_plot(zbins)
+        color_count = 0
+  
+    for i in range(maxiter + 1):
+        if i in alpha_updates:
+            alpha = alpha_updates[i]
+        
+        if plot and i % plot_every == 0:
+            plt.plot_interactive_SR_twotype(fig, ax, zbins, rho_A, rho_B, Vext_A+beta*mu_LR_A, Vext_B+beta*mu_LR_B, color_count)
+            color_count += 1
+            
+        # correlation from trained SR model
+        c1_pred_SR = neural.c1_onetype_T(model, rho_A+rho_B, T, input_bins)
+        
+        V_correction_AA = lmft.V_correction(bin_width, rho_A, potential_array_AA)
+        V_correction_AB = lmft.V_correction(bin_width, rho_B, potential_array_AB)
+        V_correction_BA = lmft.V_correction(bin_width, rho_A, potential_array_AB)
+        V_correction_BB = lmft.V_correction(bin_width, rho_B, potential_array_BB)
+
+        
+        c1_LR_A = c1_pred_SR + beta*(V_correction_AA + V_correction_AB)
+        c1_LR_B = c1_pred_SR + beta*(V_correction_BB + V_correction_BA)
+
+        # update density
+        log_rho_A_new[validA] = Vext_A[validA] + beta[validA]*mu_LR_A + c1_LR_A[validA]
+        log_rho_B_new[validB] = Vext_B[validB] + beta[validB]*mu_LR_B + c1_LR_B[validB]
+        log_rho_A_new[~validA] = -np.inf
+        log_rho_B_new[~validB] = -np.inf
+        rho_A_new = np.exp(log_rho_A_new)
+        rho_B_new = np.exp(log_rho_B_new)
+        log_rho_A = (1 - alpha) * log_rho_A + alpha * log_rho_A_new
+        log_rho_B = (1 - alpha) * log_rho_B + alpha * log_rho_B_new
+
+        if symmetric == True:
+            # Enforce reflection symmetry about center
+            log_rho_A = 0.5 * (log_rho_A + log_rho_A[::-1])
+            log_rho_B = 0.5 * (log_rho_B + log_rho_B[::-1])
+
+        rho_A = np.exp(log_rho_A)
+        rho_B = np.exp(log_rho_B)
+    
+        
+        delta_A = np.max(np.abs(rho_A_new - rho_A))
+        delta_B = np.max(np.abs(rho_B_new - rho_B))
+        delta = max(delta_A, delta_B)
+        
+        if np.isnan(delta):
+            print("Not converged: delta is NaN")
+            return  None, None, None
+
+        relative_error = delta / max(np.max(rho_B), np.max(rho_A))
+        
+        if i % print_every == 0:
+            print(f"Iteration {i}: delta = {delta}")
+
+        if delta < tolerance or relative_error < tolerance:
+            print(f"Converged after {i} iterations (delta = {delta})")
+            if plot:
+                plt.plot_end_SR_twotype(zbins, rho_A, rho_B, Vext_A+beta*mu_LR_A, Vext_B+beta*mu_LR_B, ax) 
+            return zbins, rho_A, rho_B
+        
+    print(f"Not converged after {maxiter} iterations (delta = {delta})")
+
+    return None, None, None #zbins, best_rho_A, best_rho_B
+
+
+def minimise_LR_twotype_HS(model, zbins, T,
+                        Vext_A, Vext_B, symmetric=False,
+                        eps_AA=1, eps_BB=1, interaction_parameter=0,
+                        sigma_AA=1, sigma_BB=1,
+                        rc_AA = 2.5, rc_AB = 2.5, rc_BB = 2.5, shift = True,
+                        rho_bulk_A = None, mu_A = None,
+                        rho_bulk_B = None, mu_B = None,
+                        initial_guess_A=0.04, initial_guess_B=0.04,
+                        input_bins=1201,
+                        plot=True, maxiter=100000, alpha_initial=0.000001, 
+                        alpha_updates=None,
+                        print_every=1000, plot_every=1000, tolerance=1e-5,
+                        output_dict=False):
+    """
+    Calculate the density profile with neural DFT using a standard Picard iteration 
+    for two types of particles for long-range interactions.
+
+    Parameters:
+    - model (tf.keras.Model): The Keras model to be used for the calculation of the 
+                              one-body direct correlation function.
+    - zbins (array-like): Spatial grid points.
+    - Vext (array-like): Negative of the External potential in units of kbT (-beta Vext)
+    - rho_bulk: bulk density (leave mu unspecified)
+    - mu: chemical potential of long range system in units of kbT (beta mu)
+    - interaction_parameter: diagonal element of array, where eps_ij = (1-interaction_parameter)*sqrt(eps_ii*eps_jj)
+    - plot (bool): Toggle interactive plotting.
+    - maxiter (int): Maximum number of Picard steps.
+    - alpha_initial (float): Initial value for the relaxation parameter alpha.
+    - alpha_updates (dict): Dictionary of iteration thresholds and corresponding 
+                            alpha values to update alpha during iterations.
+    - initial_guess (float): Initial guess for the density profile.
+
+    Returns:
+    - tuple: z coordinates and density profile.
+    """
+    """
+    if (mu_A is None and rho_bulk_A is None) or (mu_A is not None and rho_bulk_A is not None):
+        raise ValueError("Specify either the chemical potential 'mu' or the mean density 'rho_bulk' for species A")
+    
+    if (mu_B is None and rho_bulk_B is None) or (mu_B is not None and rho_bulk_B is not None):
+        raise ValueError("Specify either the chemical potential 'mu' or the mean density 'rho_bulk' for species B")
+    """
+    T = T * np.ones_like(zbins)
+    L = zbins[-1] - zbins[0]
+    beta = 1/T # Assuming kb=1
+    bin_width = abs(zbins[1] - zbins[0])
+
+    eps_AB = (1-interaction_parameter) * np.sqrt(eps_AA*eps_BB)
+    sigma_AB = 0.5 * (sigma_AA + sigma_BB)
+    
+    # setting up grid
+    rho_A_new = np.zeros_like(zbins)
+    rho_B_new = np.zeros_like(zbins)
+    validA = np.isfinite(Vext_A) 
+    validB = np.isfinite(Vext_B)
+    rho_A = initial_guess_A * np.ones_like(zbins)
+    rho_B = initial_guess_B * np.ones_like(zbins)
+    log_rho_A_new = np.zeros_like(zbins)
+    log_rho_B_new = np.zeros_like(zbins)
+    log_rho_A = np.zeros_like(zbins)
+    log_rho_B = np.zeros_like(zbins)
+    log_rho_A[validA] = np.log(initial_guess_A)
+    log_rho_B[validB] = np.log(initial_guess_B)
+    log_rho_A[~validA] = -np.inf
+    log_rho_B[~validB] = -np.inf
+    
+    potential_array_AA = lmft.attract(zbins, eps=eps_AA, sig=sigma_AA, cutoff=rc_AA, shift = shift)
+    potential_array_AB = lmft.attract(zbins, eps=eps_AB, sig=sigma_AB, cutoff=rc_AB, shift = shift)
+    potential_array_BB = lmft.attract(zbins, eps=eps_BB, sig=sigma_BB, cutoff=rc_BB, shift = shift)
+
+    # Calculate delta mu
+    """
+    if rho_bulk_A is not None and rho_bulk_B is not None:
+        rho_b_a = rho_bulk_A
+        rho_b_b = rho_bulk_B
+        mu_LR_A, mu_LR_B = eos.calc_mu_mixture(np.array([rho_b_a, rho_b_b]), T[0], np.array([eps_AA, eps_BB]),
+                                               np.array([sigma_AA, sigma_BB]), np.array([[0, interaction_parameter], [interaction_parameter, 0]]))
+
+    if mu_A is not None and mu_B is not None:
+        mu_LR_A = mu_A*T[0]
+        mu_LR_B = mu_B*T[0]
+        rho_b_a, rho_b_b = eos.calc_rhob_mixture(np.array([mu_LR_A, mu_LR_B]), T[0], np.array([eps_AA, eps_BB]),
+                                               np.array([sigma_AA, sigma_BB]), np.array([[0, interaction_parameter], [interaction_parameter, 0]]))
+    """
+    mu_LR_A = mu_A*T[0]
+    mu_LR_B = mu_B*T[0]
+
+    if rho_bulk_A is None and rho_bulk_B is None:
+         # may give wrong densities when near phase coexistence
+         rho_b_a, rho_b_b = eos.calc_rhob_mixture(np.array([mu_LR_A, mu_LR_B]), T[0], np.array([eps_AA, eps_BB]),
+                                               np.array([sigma_AA, sigma_BB]), np.array([[0, interaction_parameter], [interaction_parameter, 0]]))
+    else:
+        rho_b_a = rho_bulk_A
+        rho_b_b = rho_bulk_B
+
+    rho_tot = rho_b_a + rho_b_b
+
+    mu_R_A = np.log(rho_b_a) - np.mean(neural.c1_onetype(model, rho_tot*np.ones_like(T), input_bins)) # beta mu
+    mu_correction_A = mu_LR_A - mu_R_A*T[0]
+    mu_R_B = np.log(rho_b_b) - np.mean(neural.c1_onetype(model, rho_tot*np.ones_like(T), input_bins)) # beta mu
+    mu_correction_B = mu_LR_B - mu_R_B*T[0]
+
+    # Picard iteration parameter
+    alpha = alpha_initial
+    if alpha_updates is None:
+        alpha_updates = alpha_updates_default_twotype
+    
+    if plot:
+        fig, ax = plt.configure_plot(zbins)
+        color_count = 0
+  
+    for i in range(maxiter + 1):
+        if i in alpha_updates:
+            alpha = alpha_updates[i]
+        
+        if plot and i % plot_every == 0:
+            plt.plot_interactive_SR_twotype(fig, ax, zbins, rho_A, rho_B, Vext_A+beta*mu_LR_A, Vext_B+beta*mu_LR_B, color_count)
+            color_count += 1
+            
+        # correlation from trained SR model
+        c1_pred_SR = neural.c1_onetype(model, rho_A+rho_B, input_bins)
+        
+        V_correction_AA = lmft.V_correction(bin_width, rho_A - rho_b_a, potential_array_AA)
+        V_correction_AB = lmft.V_correction(bin_width, rho_B - rho_b_b, potential_array_AB)
+        V_correction_BA = lmft.V_correction(bin_width, rho_A - rho_b_a, potential_array_AB)
+        V_correction_BB = lmft.V_correction(bin_width, rho_B - rho_b_b, potential_array_BB)
+
+        
+        c1_LR_A = c1_pred_SR + beta*(V_correction_AA + V_correction_AB) - beta*mu_correction_A
+        c1_LR_B = c1_pred_SR + beta*(V_correction_BB + V_correction_BA) - beta*mu_correction_B
+
+        # update density
+        log_rho_A_new[validA] = Vext_A[validA] + beta[validA]*mu_LR_A + c1_LR_A[validA]
+        log_rho_B_new[validB] = Vext_B[validB] + beta[validB]*mu_LR_B + c1_LR_B[validB]
+        log_rho_A_new[~validA] = -np.inf
+        log_rho_B_new[~validB] = -np.inf
+        rho_A_new = np.exp(log_rho_A_new)
+        rho_B_new = np.exp(log_rho_B_new)
+        log_rho_A = (1 - alpha) * log_rho_A + alpha * log_rho_A_new
+        log_rho_B = (1 - alpha) * log_rho_B + alpha * log_rho_B_new
+
+        if symmetric == True:
+            # Enforce reflection symmetry about center
+            log_rho_A = 0.5 * (log_rho_A + log_rho_A[::-1])
+            log_rho_B = 0.5 * (log_rho_B + log_rho_B[::-1])
+
+        rho_A = np.exp(log_rho_A)
+        rho_B = np.exp(log_rho_B)
+    
+        
+        delta_A = np.max(np.abs(rho_A_new - rho_A))
+        delta_B = np.max(np.abs(rho_B_new - rho_B))
+        delta = max(delta_A, delta_B)
+        
+        if np.isnan(delta):
+            print("Not converged: delta is NaN")
+            return  None, None, None
+
+        relative_error = delta / max(np.max(rho_B), np.max(rho_A))
+        
+        if i % print_every == 0:
+            print(f"Iteration {i}: delta = {delta}")
+
+        if delta < tolerance or relative_error < tolerance:
+            print(f"Converged after {i} iterations (delta = {delta})")
+            if plot:
+                plt.plot_end_SR_twotype(zbins, rho_A, rho_B, Vext_A+beta*mu_LR_A, Vext_B+beta*mu_LR_B, ax)
+            return zbins, rho_A, rho_B
+        
+    print(f"Not converged after {maxiter} iterations (delta = {delta})")
+
+    return None, None, None #zbins, best_rho_A, best_rho_B
+
+
+def minimise_LR_twotype_HS_mf(model, zbins, T,
+                        Vext_A, Vext_B, symmetric=False,
+                        eps_AA=1, eps_BB=1, interaction_parameter=0,
+                        sigma_AA=1, sigma_BB=1,
+                        rc_AA = 2.5, rc_AB = 2.5, rc_BB = 2.5, shift = True,
+                        rho_bulk_A = None, mu_A = None,
+                        rho_bulk_B = None, mu_B = None,
+                        initial_guess_A=0.04, initial_guess_B=0.04,
+                        input_bins=1201,
+                        plot=True, maxiter=100000, alpha_initial=0.000001, 
+                        alpha_updates=None,
+                        print_every=1000, plot_every=1000, tolerance=1e-5,
+                        output_dict=False):
+    """
+    Calculate the density profile with neural DFT using a standard Picard iteration 
+    for two types of particles for long-range interactions.
+
+    Parameters:
+    - model (tf.keras.Model): The Keras model to be used for the calculation of the 
+                              one-body direct correlation function.
+    - zbins (array-like): Spatial grid points.
+    - Vext (array-like): Negative of the External potential in units of kbT (-beta Vext)
+    - rho_bulk: bulk density (leave mu unspecified)
+    - mu: chemical potential of long range system in units of kbT (beta mu)
+    - interaction_parameter: diagonal element of array, where eps_ij = (1-interaction_parameter)*sqrt(eps_ii*eps_jj)
+    - plot (bool): Toggle interactive plotting.
+    - maxiter (int): Maximum number of Picard steps.
+    - alpha_initial (float): Initial value for the relaxation parameter alpha.
+    - alpha_updates (dict): Dictionary of iteration thresholds and corresponding 
+                            alpha values to update alpha during iterations.
+    - initial_guess (float): Initial guess for the density profile.
+
+    Returns:
+    - tuple: z coordinates and density profile.
+    """
+    """
+    if (mu_A is None and rho_bulk_A is None) or (mu_A is not None and rho_bulk_A is not None):
+        raise ValueError("Specify either the chemical potential 'mu' or the mean density 'rho_bulk' for species A")
+    
+    if (mu_B is None and rho_bulk_B is None) or (mu_B is not None and rho_bulk_B is not None):
+        raise ValueError("Specify either the chemical potential 'mu' or the mean density 'rho_bulk' for species B")
+    """
+    T = T * np.ones_like(zbins)
+    L = zbins[-1] - zbins[0]
+    beta = 1/T # Assuming kb=1
+    bin_width = abs(zbins[1] - zbins[0])
+
+    eps_AB = (1-interaction_parameter) * np.sqrt(eps_AA*eps_BB)
+    sigma_AB = 0.5 * (sigma_AA + sigma_BB)
+    
+    # setting up grid
+    rho_A_new = np.zeros_like(zbins)
+    rho_B_new = np.zeros_like(zbins)
+    validA = np.isfinite(Vext_A) 
+    validB = np.isfinite(Vext_B)
+    rho_A = initial_guess_A * np.ones_like(zbins)
+    rho_B = initial_guess_B * np.ones_like(zbins)
+    log_rho_A_new = np.zeros_like(zbins)
+    log_rho_B_new = np.zeros_like(zbins)
+    log_rho_A = np.zeros_like(zbins)
+    log_rho_B = np.zeros_like(zbins)
+    log_rho_A[validA] = np.log(initial_guess_A)
+    log_rho_B[validB] = np.log(initial_guess_B)
+    log_rho_A[~validA] = -np.inf
+    log_rho_B[~validB] = -np.inf
+    
+    potential_array_AA = lmft.attract(zbins, eps=eps_AA, sig=sigma_AA, cutoff=rc_AA, shift = shift)
+    potential_array_AB = lmft.attract(zbins, eps=eps_AB, sig=sigma_AB, cutoff=rc_AB, shift = shift)
+    potential_array_BB = lmft.attract(zbins, eps=eps_BB, sig=sigma_BB, cutoff=rc_BB, shift = shift)
+
+    mu_LR_A = mu_A*T[0]
+    mu_LR_B = mu_B*T[0]
+
+    if rho_bulk_A is None and rho_bulk_B is None:
+         # may give wrong densities when near phase coexistence
+         rho_b_a, rho_b_b = eos.calc_rhob_mixture(np.array([mu_LR_A, mu_LR_B]), T[0], np.array([eps_AA, eps_BB]),
+                                               np.array([sigma_AA, sigma_BB]), np.array([[0, interaction_parameter], [interaction_parameter, 0]]))
+    else:
+        rho_b_a = rho_bulk_A
+        rho_b_b = rho_bulk_B
+
+    # Picard iteration parameter
+    alpha = alpha_initial
+    if alpha_updates is None:
+        alpha_updates = alpha_updates_default_twotype
+    
+    if plot:
+        fig, ax = plt.configure_plot(zbins)
+        color_count = 0
+  
+    for i in range(maxiter + 1):
+        if i in alpha_updates:
+            alpha = alpha_updates[i]
+        
+        if plot and i % plot_every == 0:
+            plt.plot_interactive_SR_twotype(fig, ax, zbins, rho_A, rho_B, Vext_A+beta*mu_LR_A, Vext_B+beta*mu_LR_B, color_count)
+            color_count += 1
+            
+        # correlation from trained SR model
+        c1_pred_SR = neural.c1_onetype(model, rho_A+rho_B, input_bins)
+        
+        V_correction_AA = lmft.V_correction(bin_width, rho_A, potential_array_AA)
+        V_correction_AB = lmft.V_correction(bin_width, rho_B, potential_array_AB)
+        V_correction_BA = lmft.V_correction(bin_width, rho_A, potential_array_AB)
+        V_correction_BB = lmft.V_correction(bin_width, rho_B, potential_array_BB)
+
+        
+        c1_LR_A = c1_pred_SR + beta*(V_correction_AA + V_correction_AB)
+        c1_LR_B = c1_pred_SR + beta*(V_correction_BB + V_correction_BA)
+
+        # update density
+        log_rho_A_new[validA] = Vext_A[validA] + beta[validA]*mu_LR_A + c1_LR_A[validA]
+        log_rho_B_new[validB] = Vext_B[validB] + beta[validB]*mu_LR_B + c1_LR_B[validB]
+        log_rho_A_new[~validA] = -np.inf
+        log_rho_B_new[~validB] = -np.inf
+        rho_A_new = np.exp(log_rho_A_new)
+        rho_B_new = np.exp(log_rho_B_new)
+        log_rho_A = (1 - alpha) * log_rho_A + alpha * log_rho_A_new
+        log_rho_B = (1 - alpha) * log_rho_B + alpha * log_rho_B_new
+
+        if symmetric == True:
+            # Enforce reflection symmetry about center
+            log_rho_A = 0.5 * (log_rho_A + log_rho_A[::-1])
+            log_rho_B = 0.5 * (log_rho_B + log_rho_B[::-1])
+
+        rho_A = np.exp(log_rho_A)
+        rho_B = np.exp(log_rho_B)
+    
+        
+        delta_A = np.max(np.abs(rho_A_new - rho_A))
+        delta_B = np.max(np.abs(rho_B_new - rho_B))
+        delta = max(delta_A, delta_B)
+        
+        if np.isnan(delta):
+            print("Not converged: delta is NaN")
+            return  None, None, None
+
+        relative_error = delta / max(np.max(rho_B), np.max(rho_A))
+        
+        if i % print_every == 0:
+            print(f"Iteration {i}: delta = {delta}")
+
+        if delta < tolerance or relative_error < tolerance:
+            print(f"Converged after {i} iterations (delta = {delta})")
+            if plot:
+                plt.plot_end_SR_twotype(zbins, rho_A, rho_B, Vext_A+beta*mu_LR_A, Vext_B+beta*mu_LR_B, ax)
+            return zbins, rho_A, rho_B
+        
+    print(f"Not converged after {maxiter} iterations (delta = {delta})")
+
+    return None, None, None #zbins, best_rho_A, best_rho_B

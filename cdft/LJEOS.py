@@ -1,7 +1,7 @@
 import numpy as np
 from feos.eos import EquationOfState, State, Contributions
 from feos.pets import PetsParameters
-import feos.si as si
+import si_units as si
 from scipy.interpolate import interp1d
 import maxwell_construct as maxwell
 from scipy.optimize import minimize

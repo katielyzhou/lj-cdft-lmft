@@ -1,0 +1,48 @@
+particle_types:
+  H:
+    mu: -1.2521014443194058
+    Vext: 'SlitLJPotential'
+    low: 1.5
+    high: 9.5
+    epsilon: 2.0
+    sigma: 1.0
+  O:
+    mu: -0.5991237012564128
+    Vext: 'SlitLJPotential'
+    low: 1.5
+    high: 9.5
+    epsilon: 2.0
+    sigma: 1.0
+    
+potential_pairs:
+  H_H:
+    type: 'LJ'
+    epsilon: 1.0
+    sigma: 1.0
+    rc: 2.5
+  H_O:
+    type: 'LJ'
+    epsilon: 0.806
+    sigma: 1.0
+    rc: 2.5
+  O_O:
+    type: 'LJ'
+    epsilon: 0.9
+    sigma: 1.0
+    rc: 2.5
+
+T: 1.5
+kB: 1.0 # work in energy unit kT
+box_length: 11.0
+
+global_rc: 2.5
+max_steps: 1000000000
+output_interval: 1000
+weights:
+  insert: 1.0
+  delete: 1.0
+  displace: 0.2
+  mutate: 0.0
+swap_weights: 0.0
+
+init_config: 'initial.xyz'

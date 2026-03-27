@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 import keras
 import pandas as pd
 import os
+import time
+
+start = time.time()
 
 directory="../../training/"
 name = "T"
@@ -131,7 +134,7 @@ place(ax[0])
 place(ax[2])
 
 plt.savefig(directory+"figures/inspect_data_{}_{}.png".format(name, random_sim))
-plt.show()
+#plt.show()
 
 # Curate data for training, sliding window approach
 
@@ -296,4 +299,7 @@ place(ax[2])
 
 
 plt.savefig(directory+"figures/predicted_data_{}_{}.png".format(name,random_sim))
-plt.show()
+#plt.show()
+
+end = time.time()
+print("Execution time:", end - start, "seconds")
