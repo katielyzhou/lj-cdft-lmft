@@ -1,6 +1,6 @@
 # lj-cdft-lmft
 
-Code to train a WCA system and perform cDFT/LMFT of Lennard-Jones fluids (one-component and binary systems).
+Code to train a WCA system and perform neural LMFT of Lennard-Jones fluids (one-component and binary systems).
 
 Contains the following:
 * ```training```: Code and data for training a neural network for a one-component WCA system.
@@ -18,3 +18,6 @@ Contains the following:
 [^2]: J. K. Johnson, J. A. Zollweg and K. E. Gubbins, *Mol. Phys.*, 1993, **78**, 591–618.
 [^3]: M. Heier, S. Stephan, J. Liu, W. G. Chapman, H. Hasse and K. Langenbach, *Mol. Phys.*, 2018, **116**, 2083–2094.
 [^4]: P. Rehner, G. Bauer and J. Gross, *Ind. Eng. Chem. Res.*, 2023, **62**, 5347–5357.
+
+## Installation
+To be added
