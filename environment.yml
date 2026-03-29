@@ -9,6 +9,7 @@ dependencies:
   - pip
   - pip:
       - feos==0.8.0
+      - keras==3.6.0
       - keras-tuner==1.4.7
       - matplotlib==3.9.1
       - numpy==2.0.1
