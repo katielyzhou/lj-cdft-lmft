@@ -4,8 +4,9 @@
    <img width="50%" src="https://github.com/user-attachments/assets/a625da28-448b-4b65-89b2-300069aee4e1" />
 </p>
 
+[![DOI](https://img.shields.io/badge/DOI-10.1021/acs.jpcb.6c00640-gold.svg)](https://doi.org/10.1021/acs.jpcb.6c00640)
 [![arXiv](https://img.shields.io/badge/arXiv-2601.21591-b31b1b.svg)](https://arxiv.org/abs/2601.21591)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19250208.svg)](https://doi.org/10.5281/zenodo.19250208)
+[![Zenodo](https://img.shields.io/badge/Zenodo-10.5281/zenodo.19250208-blue.svg)](https://doi.org/10.5281/zenodo.19250208)
 
 This repository contains the code to train a WCA system and perform neural LMFT of Lennard-Jones fluids (one-component and binary systems). Details can be found in the paper [here](https://arxiv.org/abs/2601.21591).
 
@@ -44,6 +45,6 @@ To obtain equilibrium density profiles, see examples in ```cdft/notebooks_single
 
 ## Citation
 If you found the code useful, please cite:
-> K. L. Y. Zhou, A. T. Bui, and S. J. Cox, <i> Roles of Bulk and Surface Thermodynamics in the Selective Adsorption of a Confined Azeotropic Mixture </i> (2026)
+> K. L. Y. Zhou, A. T. Bui, and S. J. Cox, Roles of Bulk and Surface Thermodynamics in the Selective Adsorption of a Confined Azeotropic Mixture, <i> J. Phys. Chem. B</i>, **130**, 4455 (2026)
 
-Links to: [arXiv:2601.21591](https://arxiv.org/abs/2601.21591)
+Links to: [arXiv:2601.21591](https://arxiv.org/abs/2601.21591) | [J. Phys. Chem. B](https://doi.org/10.1021/acs.jpcb.6c00640) 
